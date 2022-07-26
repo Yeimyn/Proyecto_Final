@@ -1,0 +1,703 @@
+---
+title: "Estadísticas policiales 2021- Fiorella Cordero Obando C12294 y Yeimy Navarro Segura C05525"
+output: 
+  flexdashboard::flex_dashboard:
+    orientation: columns
+    vertical_layout: fill
+runtime: shiny
+---
+
+```{r setup, include=FALSE}
+library(flexdashboard)
+```
+
+```{r paquetes}
+
+
+library(dplyr)
+library(sf)
+library(leaflet)
+library(DT)
+library(readr)
+library(ggplot2)
+library(plotly)
+library(readxl)
+library(stats)
+library(stringi)
+library(lubridate)
+library(shiny)
+
+```
+
+```{r lectura datos policiales, message=FALSE}
+
+## Lectura Datos
+
+estadisticas_policiales <-
+  read_excel("C:/Users/Dell/Documents/I-2022/Procesamiento de Datos Geograficos/Tarea 2/estadisticaspoliciales2021.xls") %>%
+  mutate(Fecha = as.Date(Fecha, format = "%d/%m/%Y"))
+
+# Lectura, transformación y visualización de datos geoespaciales de provincias
+
+# Lectura
+provincias <-
+  st_read(
+    dsn = "C:/Users/Dell/Documents/I-2022/Procesamiento de Datos Geograficos/Proyecto final/provincias.geojson",
+    quiet = TRUE
+  ) %>%
+  st_transform(4326)
+
+# Transformación
+provincias <-
+  provincias %>%
+  st_transform(5367) %>%
+  st_simplify(dTolerance = 100) %>%
+  st_transform(4326)
+
+# Lectura, transformación y visualización de datos geoespaciales de cantones
+
+# Lectura
+cantones <-
+  st_read(
+    dsn = "C:/Users/Dell/Documents/I-2022/Procesamiento de Datos Geograficos/Proyecto final/cantones_simplificados.geojson",
+    quiet = TRUE
+  ) %>%
+  st_transform(4326)
+
+# Transformación
+cantones <-
+  cantones %>%
+  st_transform(5367) %>%
+  st_simplify(dTolerance = 100) %>% 
+  st_transform(4326)
+
+# Lectura, transformación y visualización de datos geoespaciales de distritos
+
+# Lectura
+distritos <-
+  st_read(
+    dsn = "C:/Users/Dell/Documents/I-2022/Procesamiento de Datos Geograficos/Proyecto final/distritos_simplificados.geojson",
+    quiet = TRUE
+  ) %>%
+  st_transform(4326) 
+
+# Transformación
+distritos <-
+  distritos %>%
+  st_transform(5367) %>%
+  st_simplify(dTolerance = 100) %>% 
+  st_transform(4326)
+
+```
+
+```{r en provincias, message=FALSE, warning=FALSE}
+
+### Provincias
+
+# Normalización de los nombres de provincias
+
+# En el data frame de provincias
+provincias <-
+  provincias %>%
+  mutate(provincia_normalizado = tolower(stri_trans_general(provincia, id = "Latin-ASCII")))
+
+# En el data frame de delitos
+estadisticas_policiales <-
+  estadisticas_policiales %>%
+  mutate(provincia_normalizado = tolower(stri_trans_general(Provincia, id = "Latin-ASCII")))
+
+# Unión del código de provincia a delitos
+estadisticas_policiales <-
+  estadisticas_policiales %>%
+  left_join(
+    dplyr::select(
+      st_drop_geometry(provincias),
+      cod_provin,
+      provincia_normalizado
+    ),
+    by = "provincia_normalizado",
+    copy = FALSE,
+    keep = FALSE
+  )
+
+# Conteo de registros por código de provincia
+
+delitos_x_provincia <-
+  estadisticas_policiales %>%
+  count(cod_provin, name = "delitos")
+
+# Unión de cantidad de delitos por provincia a provincias
+
+provincias_delitos <-
+  provincias %>%
+  left_join(
+    delitos_x_provincia,
+    by = "cod_provin",
+    copy = FALSE,
+    keep = FALSE
+  )
+
+```
+
+```{r en cantones, message=FALSE, warning=FALSE}
+
+### Cantones
+
+# Normalización de los nombres de cantones
+
+# En el data frame de cantones
+
+cantones <-
+  cantones %>%
+  mutate(canton_normalizado = tolower(stri_trans_general(canton, id = "Latin-ASCII")))
+
+# En el data frame de delitos
+
+estadisticas_policiales <-
+  estadisticas_policiales %>%
+  mutate(canton_normalizado = tolower(stri_trans_general(Canton, id = "Latin-ASCII")))
+
+estadisticas_policiales %>%
+  left_join(
+    dplyr::select(st_drop_geometry(cantones),
+                  canton_normalizado, cod_canton),
+    by = "canton_normalizado",
+    copy = FALSE,
+    keep = FALSE
+  )%>%
+  filter(is.na(cod_canton) & canton_normalizado != "desconocido") %>% 
+  distinct(canton_normalizado)
+
+# Corrección de nombres de cantones en delitos
+estadisticas_policiales <-
+  estadisticas_policiales %>%
+  mutate(Canton = if_else(Canton == "LEON CORTES", "LEON CORTES CASTRO", Canton)) %>%
+  mutate(Canton = if_else(Canton == "VASQUEZ DE CORONADO", "VAZQUEZ DE CORONADO", Canton)) 
+
+# Se realiza nuevamente esta operación para reflejar los cambios en los nombres de cantones
+estadisticas_policiales <-
+  estadisticas_policiales %>%
+  mutate(canton_normalizado = tolower(stri_trans_general(Canton, id = "Latin-ASCII")))
+
+# Unión del código de cantón a delitos
+estadisticas_policiales <-
+  estadisticas_policiales %>%
+  left_join(
+    dplyr::select(
+      st_drop_geometry(cantones),
+      cod_canton,
+      canton_normalizado
+    ),
+    by = "canton_normalizado",
+    copy = FALSE,
+    keep = FALSE
+  ) 
+
+# Conteo de registros por código de cantón
+delitos_x_canton <-
+  estadisticas_policiales %>%
+  count(cod_canton, name = "delitos")
+
+# Unión de cantidad de delitos por cantón a cantones
+cantones_delitos <-
+  cantones %>%
+  left_join(
+    delitos_x_canton,
+    by = "cod_canton",
+    copy = FALSE,
+    keep = FALSE
+  )
+
+
+```
+
+```{r en distritos, message=FALSE, warning=FALSE}
+
+### Distritos
+
+# Normalización de los nombres de distritos
+
+# En el data frame de distritos
+distritos <-
+  distritos %>%
+  mutate(distrito_normalizado = tolower(stri_trans_general(distrito, id = "Latin-ASCII")))
+
+# En el data frame de delitos
+estadisticas_policiales <-
+  estadisticas_policiales %>%
+  mutate(distrito_normalizado = tolower(stri_trans_general(Distrito, id = "Latin-ASCII")))
+
+estadisticas_policiales %>%
+  left_join(
+    dplyr::select(st_drop_geometry(distritos),
+                  codigo_dta, 
+                  cod_canton, 
+                  distrito_normalizado
+    ),
+    by = c("cod_canton" = "cod_canton", "distrito_normalizado" = "distrito_normalizado"),
+    copy = FALSE,
+    keep = FALSE
+  )%>%
+  filter(is.na(codigo_dta) & distrito_normalizado != "desconocido") %>% 
+  distinct(cod_canton, Canton, distrito_normalizado) %>%
+  print(n = Inf)
+
+# Corrección de nombres de distritos en el data frame de delitos
+
+estadisticas_policiales <-
+  estadisticas_policiales %>%
+  mutate(Distrito = if_else(cod_canton == 703 & Distrito == "CAIRO", "EL CAIRO", Distrito)) %>%
+  mutate(Distrito = if_else(cod_canton == 210 & Distrito == "FORTUNA", "LA FORTUNA", Distrito)) %>%
+  mutate(Distrito = if_else(cod_canton == 410 & Distrito == "HORQUETAS", "LAS HORQUETAS", Distrito)) %>%
+  mutate(Distrito = if_else(cod_canton == 119 & Distrito == "GENERAL", "EL GENERAL", Distrito)) %>%
+  mutate(Distrito = if_else(cod_canton == 402 & Distrito == "SAN JOSE DE LA MONTA?A", "SAN JOSE DE LA MONTANA", Distrito)) %>%
+  mutate(Distrito = if_else(cod_canton == 602 & Distrito == "MACACOMA", "MACACONA", Distrito)) %>%
+  mutate(Distrito = if_else(cod_canton == 301 & Distrito == "SAN FRANCISCO", "AGUACALIENTE O SAN FRANCISCO", Distrito)) %>%
+  mutate(Distrito = if_else(cod_canton == 209 & Distrito == "CEIBA", "LA CEIBA", Distrito)) %>%
+  mutate(Distrito = if_else(cod_canton == 605 & Distrito == "CORTES", "PUERTO CORTES", Distrito)) %>%
+  mutate(Distrito = if_else(cod_canton == 201 & Distrito == "LA GARITA", "GARITA", Distrito)) %>%
+  mutate(Distrito = if_else(cod_canton == 119 & Distrito == "LA AMISTAD", "LA  AMISTAD", Distrito)) %>% 
+  mutate(Distrito = if_else(cod_canton == 213 & Distrito == "SAN JOSE (PIZOTE)", "SAN JOSE O PIZOTE", Distrito)) %>%
+  mutate(Distrito = if_else(cod_canton == 607 & Distrito == "JIMENEZ", "PUERTO JIMENEZ", Distrito)) %>%
+  mutate(Distrito = if_else(cod_canton == 405 & Distrito == "LOS ANGELES", "ANGELES", Distrito)) %>%
+  mutate(Distrito = if_else(cod_canton == 301 & Distrito == "GUADALUPE", "GUADALUPE O ARENILLA", Distrito)) %>%
+  mutate(Distrito = if_else(cod_canton == 407 & Distrito == "ASUNCION", "LA ASUNCION", Distrito)) %>%
+  mutate(Distrito = if_else(cod_canton == 209 & Distrito == "MASTATE", "EL MASTATE", Distrito)) %>%
+  mutate(Distrito = if_else(cod_canton == 604 & Distrito == "UNION", "LA UNION", Distrito)) %>%
+  mutate(Distrito = if_else(cod_canton == 108 & Distrito == "MATA PLATANO", "MATA DE PLATANO", Distrito)) %>%
+  mutate(Distrito = if_else(cod_canton == 608 & Distrito == "AGUA BUENA", "AGUABUENA", Distrito)) %>%
+  mutate(Distrito = if_else(cod_canton == 206 & Distrito == "ROSARIO", "EL ROSARIO", Distrito)) %>%
+  mutate(Distrito = if_else(cod_canton == 210 & Distrito == "PALMERA", "LA PALMERA", Distrito)) %>%
+  mutate(Distrito = if_else(cod_canton == 210 & Distrito == "TIGRA", "LA TIGRA", Distrito)) %>%
+  mutate(Distrito = if_else(cod_canton == 706 & Distrito == "MERECEDES", "MERCEDES", Distrito)) %>%
+  mutate(Distrito = if_else(cod_canton == 504 & Distrito == "FORTUNA", "LA FORTUNA", Distrito)) %>%
+  mutate(Distrito = if_else(cod_canton == 605 & Distrito == "DRAKE", "BAHIA DRAKE", Distrito)) %>%
+  mutate(Distrito = if_else(cod_canton == 207 & Distrito == "GRANJA", "LA GRANJA", Distrito)) %>%
+  mutate(Distrito = if_else(cod_canton == 410 & Distrito == "CURE?A", "CURENA", Distrito)) %>%
+  mutate(Distrito = if_else(cod_canton == 305 & Distrito == "EL CHIRRIPO", "CHIRRIPO", Distrito)) %>%
+  mutate(Distrito = if_else(cod_canton == 106 & Distrito == "LA LEGUA", "LEGUA", Distrito)) %>%
+  mutate(Distrito = if_else(cod_canton == 211 & Distrito == "TAPEZCO", "TAPESCO", Distrito))
+
+# Se realiza nuevamente esta operación para reflejar los cambios en los nombres de distritos
+estadisticas_policiales <-
+  estadisticas_policiales %>%
+  mutate(distrito_normalizado = tolower(stri_trans_general(Distrito, id = "Latin-ASCII")))
+
+# Revisión
+estadisticas_policiales %>%
+  left_join(
+    dplyr::select(st_drop_geometry(distritos),
+                  codigo_dta, 
+                  cod_canton, 
+                  distrito_normalizado
+    ),
+    by = c("cod_canton" = "cod_canton", "distrito_normalizado" = "distrito_normalizado"),
+    copy = FALSE,
+    keep = FALSE
+  )  %>%
+  filter(is.na(codigo_dta) & distrito_normalizado != "desconocido") %>% 
+  distinct(cod_canton, Canton, distrito_normalizado) %>% 
+  print(n = Inf)
+
+# Unión del código de distrito a delitos
+estadisticas_policiales <-
+  estadisticas_policiales %>%
+  left_join(
+    dplyr::select(
+      st_drop_geometry(distritos),
+      codigo_dta,
+      cod_canton,
+      distrito_normalizado
+    ),
+    by = c("cod_canton" = "cod_canton", "distrito_normalizado" = "distrito_normalizado"),
+    copy = FALSE,
+    keep = FALSE
+  )
+  
+
+# Conteo de delitos por código de distrito
+delitos_x_distrito <-
+  estadisticas_policiales %>%
+  count(codigo_dta, name = "delitos")
+
+# Unión de cantidad de delitos por distrito a distritos
+distritos_delitos <-
+  distritos %>%
+  left_join(
+    delitos_x_distrito,
+    by = "codigo_dta",
+    copy = FALSE,
+    keep = FALSE
+  ) %>%
+  mutate(estadisticas_policiales = ifelse(is.na(delitos), 0, estadisticas_policiales))
+
+```
+
+
+```{r listas}
+# Listas ordenadas
+
+lista_tipo_delito <- unique(estadisticas_policiales$Delito)
+lista_tipo_delito <- sort(lista_tipo_delito)
+lista_tipo_delito <- c("Todos", lista_tipo_delito)
+
+lista_victima <- unique(estadisticas_policiales$Victima)
+lista_victima <- sort(lista_victima)
+lista_victima <- c("Todas", lista_victima)
+
+lista_edad <- unique(estadisticas_policiales$Edad)
+lista_edad <- sort(lista_edad)
+lista_edad <- c("Todos", lista_edad)
+
+lista_genero <- unique(estadisticas_policiales$Genero)
+lista_genero <- sort(lista_genero)
+lista_genero <- c("Todos", lista_genero)
+
+```
+
+
+Página 1
+====================================================================
+
+Column {.sidebar}
+-----------------------------------------------------------------------
+
+```{r filtros}
+
+h3("Filtros de datos")
+
+# Tipo de delito
+selectInput(
+  inputId = "Delito",
+  label = "Tipo de Delito",
+  choices = lista_tipo_delito,
+  selected = "Todos"
+)
+
+# Víctima
+selectInput(
+  inputId = "Victima",
+  label = "Víctima",
+  choices = lista_victima,
+  selected = "Todas"
+)
+
+# Género
+selectInput(
+  inputId = "Genero",
+  label = "Género",
+  choices = lista_genero,
+  selected = "Todos"
+)
+
+
+# Edad
+selectInput(
+  inputId = "Edad",
+  label = "Edad",
+  choices = lista_edad,
+  selected = "Todos"
+)
+
+# Función para filtrar los datos con base en los controles de entrada
+
+filtrarDelitos <- reactive({
+  delitos_filtrados <- estadisticas_policiales
+  
+  if (input$Delito != "Todos") {
+    delitos_filtrados <-
+      delitos_filtrados %>%
+      filter(Delito == input$Delito)}
+
+  if (input$Victima != "Todas") {
+    delitos_filtrados <-
+      delitos_filtrados %>%
+      filter(Victima == input$Victima)}
+
+  if (input$Genero != "Todos") {
+    delitos_filtrados <-
+      delitos_filtrados %>%
+      filter(Genero == input$Genero)}
+
+  if (input$Edad != "Todos") {
+    delitos_filtrados <-
+      delitos_filtrados %>%
+      filter(Edad == input$Edad)}
+  
+   return(delitos_filtrados)
+})
+
+### Pensamiento Geográfico
+### Proyecto Final
+
+
+### **Fuentes de datos:[Estadísticas policiales 2021 (OIJ)](https://sitiooij.poder-judicial.go.cr/index.php/ayuda/servicios-policiales/servicios-a-organizaciones/indice-de-transparencia-del-sector-publico-costarricense/datos-abiertos) y [Distritos simplificados (IGN)] (https://www.snitcr.go.cr/ico_servicios_ogc_info?k=bm9kbzo6MjY=&nombre=IGN%20Cartograf%C3%ADa%201:5mil)** 
+
+
+```
+
+Row {data-height=990}
+-----------------------------------------------------------------------
+
+### Mapa
+
+```{r mapa leaflet}
+
+# Paleta de colores para los mapas
+colores_distritos_delitos <-
+  colorNumeric(palette = "RdYlBu",
+               domain = distritos_delitos$delitos,
+               na.color = "transparent")
+
+
+renderLeaflet({
+  estadisticas_policiales <- filtrarDelitos()
+
+  
+  leaflet() %>%
+      setView(
+      lng = -84.19452,
+      lat = 9.572735,
+      zoom = 7) %>%
+    addTiles(group = "OpenStreetMap") %>%
+    addProviderTiles(provider = providers$Esri.WorldImagery, group = "ESRI World Imagery") %>%
+    addPolygons(
+      data = distritos_delitos,
+      fillColor = ~ colores_distritos_delitos(distritos_delitos$delitos),
+      fillOpacity = 0.8,
+      color = "black",
+      stroke = TRUE,
+      weight = 1.0,
+      popup = paste(
+        paste(
+          "<strong>Cantón:</strong>",
+          distritos_delitos$canton
+        ),
+        paste(
+          "<strong>Distrito:</strong>",
+          distritos_delitos$distrito
+        ),
+        paste(
+          "<strong>Delitos:</strong>",
+          distritos_delitos$delitos
+        ),
+        sep = '<br/>'
+      ),
+      group = "Delitos en distritos"
+    ) %>%
+    addLayersControl(
+      baseGroups = c("OpenStreetMap", "ESRI World Imagery"),
+      overlayGroups = c("Delitos en distritos")
+    ) %>%
+    addLegend(
+      position = "bottomleft",
+      pal = colores_distritos_delitos,
+      values = distritos_delitos$delitos,
+      group = "Delitos en distritos",
+      title = "Cantidad de delitos"
+    )
+})
+
+
+```
+
+Página 2
+====================================================================
+Row {data-height=500}
+-----------------------------------------------------------------------
+
+### Tabla
+
+```{r tabla}
+
+renderDT({
+  estadisticas_policiales <- filtrarDelitos()
+
+  estadisticas_policiales %>%
+    select(Delito, Fecha, Victima, Edad, Genero, Provincia, Canton, Distrito) %>%
+    mutate(Fecha = as.Date(Fecha, format = "%d/%m/%Y")) %>%
+    datatable(
+      colnames = c("Delito", "Fecha", "Víctima", "Edad", "Género", "Provincia", "Cantón", "Distrito"),
+      options = list(
+        pageLength = 5,
+        language = list(url = '//cdn.datatables.net/plug-ins/1.10.11/i18n/Spanish.json')
+      )
+    )
+})  
+
+```
+
+Row {data-height=500}
+-----------------------------------------------------------------------
+
+### Gráfico 1
+
+```{r}
+
+# Gráfico de barras simples con cantidad de cada delito
+  
+renderPlotly({
+  estadisticas_policiales <- filtrarDelitos()
+  
+  grafico_cantidad_delito <-
+    estadisticas_policiales %>%
+    count(Delito) %>% 
+    ggplot(aes(x = reorder(Delito, n), y = n)) +
+    geom_bar(stat = "identity") +
+    ggtitle("Cantidad de delitos") +
+    xlab("Tipo de delito") +
+    ylab("Cantidad de delitos por tipo") +
+    coord_flip() +
+    theme_get()
+
+    
+  
+  # Gráfico plotly
+  
+  grafico_cantidad_delito %>%
+    ggplotly() %>% 
+    config(locale = 'es')
+})
+
+
+```
+
+Página 3
+====================================================================
+
+Row
+-----------------------------------------------------------------------
+
+### Gráfico 2
+
+```{r}
+
+# Gráfico de barras simples con cantidad de víctimas
+
+renderPlotly({
+  estadisticas_policiales <- filtrarDelitos()
+
+  grafico_tipo_delito <-
+    estadisticas_policiales %>%
+    count(Victima) %>%
+    ggplot(aes(x = reorder(Victima, n), y = n)) +
+    geom_bar(stat = "identity") +
+    ggtitle("Cantidad de delitos por víctima") +
+    xlab("Víctima") +
+    ylab("Cantidad de delitos") +
+    coord_flip() +
+    theme_get()
+    
+  
+  # Gráfico plotly
+  
+  grafico_tipo_delito %>%
+    ggplotly() %>% 
+    config(locale = 'es')
+})
+
+
+```
+
+
+### Gráfico 3
+
+```{r}
+
+# Gráfico de barras simples con delitos cometidos por mes
+
+renderPlotly({
+  estadisticas_policiales <- filtrarDelitos()
+
+  estadisticas_policiales <-
+    estadisticas_policiales %>%
+    mutate(mes = month(Fecha)) 
+  
+  grafico_delitos_por_mes <-
+    estadisticas_policiales %>%
+    ggplot(aes(x = desc(mes))) +
+    geom_bar() +
+    ggtitle("Delitos cometidos por mes") +
+    xlab("Mes") +
+    ylab("Cantidad de Delitos") +
+    theme_get()
+  
+  
+  # Gráfico plotly
+  
+  grafico_delitos_por_mes %>%
+    ggplotly() %>% 
+    config(locale = 'es')
+})
+
+
+```
+
+Row
+-----------------------------------------------------------------------
+
+### Gráfico 4
+
+```{r}
+
+# Gráfico de proporción por género
+
+renderPlotly({
+  estadisticas_policiales <- filtrarDelitos()
+
+  proporcion_delitos_genero <-
+    estadisticas_policiales %>%
+    ggplot(aes(x = Delito, fill = Genero)) +
+    geom_bar(position = "fill") +
+    ggtitle("Proporción de delitos por género") +
+    xlab("Tipo de delito") +
+    ylab("Proporción") +
+    labs(fill = "Género") +
+    coord_flip() +
+    theme_get()
+  
+  proporcion_delitos_genero %>%
+    ggplotly() %>% 
+    config(locale = 'es')
+})
+
+  
+```
+
+### Gráfico 5
+
+```{r}
+
+# Gráfico de proporción por edad
+
+renderPlotly({
+  estadisticas_policiales <- filtrarDelitos()
+
+  proporcion_delitos_edad <-
+    estadisticas_policiales %>%
+    ggplot(aes(x = Delito, fill = Edad)) +
+    geom_bar(position = "fill") +
+    ggtitle("Proporción de delitos por edad") +
+    xlab("Tipo de delito") +
+    ylab("Proporción") +
+    labs(fill = "Edad") +
+    coord_flip() +
+    theme_get()
+  
+  proporcion_delitos_edad %>%
+    ggplotly() %>% 
+    config(locale = 'es')
+})
+
+```
+
+Página 4
+====================================================================
+
+Row {data-height=20}
+-----------------------------------------------------------------------
+
+### Fuentes de datos:
+
+**[Estadísticas policiales 2021 (OIJ)](https://sitiooij.poder-judicial.go.cr/index.php/ayuda/servicios-policiales/servicios-a-organizaciones/indice-de-transparencia-del-sector-publico-costarricense/datos-abiertos) y [Distritos simplificados (IGN)](https://www.snitcr.go.cr/ico_servicios_ogc_info?k=bm9kbzo6MjY=&nombre=IGN%20Cartograf%C3%ADa%201:5mil)** 
+
